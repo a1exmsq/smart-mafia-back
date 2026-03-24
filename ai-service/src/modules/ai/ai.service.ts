@@ -1,0 +1,135 @@
+import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import OpenAI from 'openai';
+import { NarrateDto, NarrationEvent, AiResponseDto, ChatDto } from './dto/ai.dto';
+
+// ── Prompt templates per game event ──────────────────────────────────────────
+const NARRATION_PROMPTS: Record<NarrationEvent, (ctx: NarrateDto) => string> = {
+  [NarrationEvent.GAME_START]: (ctx) =>
+    `The Mafia game is beginning. ${ctx.playerNames?.length} players have gathered: ${ctx.playerNames?.join(', ')}. 
+     Build dramatic suspense as the game starts. Warn that among them, the Mafia lurks in the shadows.`,
+
+  [NarrationEvent.DAY_PHASE]: (ctx) =>
+    `It is now DAY — Round ${ctx.round ?? 1}. The town wakes up. 
+     ${ctx.context ?? 'The sun rises, but trust is thin.'}
+     Alive players: ${ctx.playerNames?.join(', ') ?? 'unknown'}.
+     Narrate the transition to day with tension, reminding players to discuss and find the Mafia.`,
+
+  [NarrationEvent.VOTING_PHASE]: (ctx) =>
+    `The town must now vote to eliminate a suspect. Round ${ctx.round ?? 1}.
+     ${ctx.context ?? ''} 
+     Players present: ${ctx.playerNames?.join(', ') ?? 'unknown'}.
+     Narrate this tense voting moment dramatically. Remind them a wrong choice could doom the town.`,
+
+  [NarrationEvent.NIGHT_PHASE]: (ctx) =>
+    `Night falls over the town. Round ${ctx.round ?? 1}. Everyone closes their eyes.
+     ${ctx.context ?? 'Darkness descends and evil stirs.'}
+     The Mafia is awake and choosing their next victim.
+     Narrate the eerie silence of the night dramatically.`,
+
+  [NarrationEvent.PLAYER_ELIMINATED]: (ctx) =>
+    `A player has been eliminated! ${ctx.context ?? 'The town has made its choice.'}
+     Narrate this elimination dramatically. Their fate has been sealed.
+     The remaining players: ${ctx.playerNames?.join(', ') ?? 'unknown'}.`,
+
+  [NarrationEvent.GAME_OVER]: (ctx) =>
+    `The game is over! ${ctx.context ?? 'Victory has been decided.'}
+     ${ctx.playerNames?.length ? `Survivors: ${ctx.playerNames.join(', ')}.` : ''}
+     Deliver a dramatic closing narration fitting for the winners.`,
+
+  [NarrationEvent.CUSTOM]: (ctx) =>
+    ctx.context ?? 'Narrate an interesting moment in the Mafia game.',
+};
+
+@Injectable()
+export class AiService {
+  private readonly openai: OpenAI;
+  private readonly logger = new Logger(AiService.name);
+  private readonly model: string;
+  private readonly systemPrompt: string;
+
+  constructor(private readonly config: ConfigService) {
+    const apiKey = this.config.get<string>('OPENAI_API_KEY');
+    if (!apiKey) {
+      this.logger.warn('⚠️  OPENAI_API_KEY not set — AI responses will be mocked');
+    }
+
+    this.openai = new OpenAI({ apiKey: apiKey || 'not-set' });
+    this.model = this.config.get<string>('OPENAI_MODEL', 'gpt-4o-mini');
+    this.systemPrompt = this.config.get<string>(
+      'NARRATOR_PERSONA',
+      'You are a dramatic narrator for the Mafia party game. Keep responses under 120 words. Use atmospheric, suspenseful language.',
+    );
+  }
+
+  // ── Narration: game events ─────────────────────────────────────────────────
+  async narrate(dto: NarrateDto): Promise<AiResponseDto> {
+    const userPrompt = NARRATION_PROMPTS[dto.event](dto);
+    return this.callOpenAI([{ role: 'user', content: userPrompt }]);
+  }
+
+  // ── Chat: player talks to AI narrator ─────────────────────────────────────
+  async chat(dto: ChatDto): Promise<AiResponseDto> {
+    const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+      ...(dto.history ?? []).map((h) => ({
+        role: h.role as 'user' | 'assistant',
+        content: h.content,
+      })),
+      { role: 'user', content: dto.message },
+    ];
+
+    return this.callOpenAI(messages);
+  }
+
+  // ── Health: verify OpenAI reachability ────────────────────────────────────
+  async checkHealth(): Promise<{ status: string; model: string }> {
+    try {
+      await this.openai.models.retrieve(this.model);
+      return { status: 'ok', model: this.model };
+    } catch {
+      return { status: 'degraded', model: this.model };
+    }
+  }
+
+  // ── Core OpenAI call with error handling ──────────────────────────────────
+  private async callOpenAI(
+    messages: OpenAI.Chat.ChatCompletionMessageParam[],
+  ): Promise<AiResponseDto> {
+    try {
+      const response = await this.openai.chat.completions.create({
+        model: this.model,
+        messages: [{ role: 'system', content: this.systemPrompt }, ...messages],
+        max_tokens: 200,
+        temperature: 0.85,
+      });
+
+      const choice = response.choices[0];
+      const narration = choice.message?.content ?? 'The narrator is silent...';
+
+      this.logger.debug(`AI narration generated (${response.usage?.total_tokens} tokens)`);
+
+      return {
+        narration,
+        model: response.model,
+        usage: {
+          promptTokens: response.usage?.prompt_tokens ?? 0,
+          completionTokens: response.usage?.completion_tokens ?? 0,
+          totalTokens: response.usage?.total_tokens ?? 0,
+        },
+      };
+    } catch (err: any) {
+      this.logger.error('OpenAI call failed', err?.message);
+
+      // Fallback narration so the game can continue
+      if (err?.status === 401) {
+        throw new ServiceUnavailableException('Invalid OpenAI API key');
+      }
+
+      return {
+        narration: 'The narrator pauses for a moment, gathering their thoughts...',
+        model: this.model,
+        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      };
+    }
+  }
+}
