@@ -3,16 +3,24 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  forwardRef,
+  Inject,
 } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma.service';
 import { Room, RoomStatus, Prisma } from '@prisma/client';
 import { CreateRoomDto } from './dto/room.dto';
+import { PlayersService } from '../players/players.service';
+import { GameStateService } from '../game-state/game-state.service';
 
 @Injectable()
 export class RoomsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly playersService: PlayersService,
+    @Inject(forwardRef(() => GameStateService))
+    private readonly gameStateService: GameStateService,
+  ) {}
 
-  // ── Generate unique 8-char room code ─────────────────────────────────────
   private generateCode(): string {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
     return Array.from({ length: 8 }, () =>
@@ -77,24 +85,30 @@ export class RoomsService {
       throw new ForbiddenException('Only host can start the game');
     }
 
-    if (room.status === RoomStatus.IN_PROGRESS) {
-      // Already started - return current state without error
-      return room;
-    }
+    if (room.status === RoomStatus.IN_PROGRESS) return room;
 
     if (room.status === RoomStatus.FINISHED) {
       throw new BadRequestException('This game has already finished');
     }
 
     const playerCount = await this.prisma.player.count({ where: { roomId } });
-    if (playerCount < 3) {
-      throw new BadRequestException(`Need at least 3 players to start (have ${playerCount})`);
+    if (playerCount < 4) {
+      throw new BadRequestException(
+        `Need at least 4 players to start (have ${playerCount})`,
+      );
     }
 
     return this.prisma.room.update({
       where: { id: roomId },
       data: { status: RoomStatus.IN_PROGRESS },
     });
+  }
+
+  async startGameSession(roomId: string, requesterId: string) {
+    const room = await this.startGame(roomId, requesterId);
+    await this.playersService.ensureRolesAssigned(roomId);
+    const gameState = await this.gameStateService.initGame(roomId);
+    return { room, gameState };
   }
 
   async endGame(roomId: string): Promise<Room> {

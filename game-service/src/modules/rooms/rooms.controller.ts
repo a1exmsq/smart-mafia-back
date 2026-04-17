@@ -1,30 +1,19 @@
-import {
-  Body,
-  Controller,
-  Get,
-  Param,
-  Post,
-  Patch,
-  UseGuards,
-  Request,
-} from '@nestjs/common';
-import {
-  ApiBearerAuth,
-  ApiOperation,
-  ApiParam,
-  ApiResponse,
-  ApiTags,
-} from '@nestjs/swagger';
+import { Body, Controller, Get, Param, Post, Patch, UseGuards, Request } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { RoomsService } from './rooms.service';
 import { CreateRoomDto, RoomResponseDto } from './dto/room.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { GameGateway } from '../../gateway/game.gateway';
 
 @ApiTags('rooms')
 @ApiBearerAuth('JWT')
 @UseGuards(JwtAuthGuard)
 @Controller('rooms')
 export class RoomsController {
-  constructor(private readonly roomsService: RoomsService) {}
+  constructor(
+    private readonly roomsService: RoomsService,
+    private readonly gateway: GameGateway,
+  ) {}
 
   @Post()
   @ApiOperation({ summary: 'Create a new game room' })
@@ -35,26 +24,24 @@ export class RoomsController {
 
   @Get()
   @ApiOperation({ summary: 'List all active rooms' })
-  @ApiResponse({ status: 200, type: [RoomResponseDto] })
   listActive() {
     return this.roomsService.listActive();
   }
 
   @Get(':code')
-  @ApiOperation({ summary: 'Get room details by code' })
-  @ApiParam({ name: 'code', example: 'MAFIA1234' })
-  @ApiResponse({ status: 200, type: RoomResponseDto })
-  @ApiResponse({ status: 404, description: 'Room not found' })
+  @ApiOperation({ summary: 'Get room by code' })
+  @ApiParam({ name: 'code' })
   findByCode(@Param('code') code: string) {
     return this.roomsService.findByCode(code);
   }
 
   @Patch(':id/start')
   @ApiOperation({ summary: 'Start the game (host only)' })
-  @ApiParam({ name: 'id', description: 'Room UUID' })
-  @ApiResponse({ status: 200, type: RoomResponseDto })
-  @ApiResponse({ status: 403, description: 'Only host can start' })
-  startGame(@Param('id') id: string, @Request() req) {
-    return this.roomsService.startGame(id, req.user.sub);
+  @ApiParam({ name: 'id' })
+  async startGame(@Param('id') id: string, @Request() req) {
+    const session = await this.roomsService.startGameSession(id, req.user.sub);
+    // Broadcast game_started + private roles to all connected sockets
+    await this.gateway.sendRolesAndBroadcast(id, session.gameState);
+    return session;
   }
 }

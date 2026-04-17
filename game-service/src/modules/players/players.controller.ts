@@ -39,7 +39,7 @@ export class PlayersController {
   @ApiOperation({ summary: 'Get all players in a room' })
   @ApiParam({ name: 'roomId' })
   @ApiResponse({ status: 200, description: 'List of players with usernames' })
-  getPlayers(@Param('roomId') roomId: string) {
-    return this.playersService.getPlayersInRoom(roomId);
+  getPlayers(@Param('roomId') roomId: string, @Request() req) {
+    return this.playersService.getVisiblePlayersInRoom(roomId, req.user.sub);
   }
 }

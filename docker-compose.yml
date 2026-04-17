@@ -56,7 +56,6 @@ services:
     env_file: ./game-service/.env
     ports:
       - '3002:3002'
-      - '3012:3012'
     depends_on:
       postgres:
         condition: service_healthy

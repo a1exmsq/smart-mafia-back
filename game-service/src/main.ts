@@ -13,7 +13,7 @@ async function bootstrap() {
   app.enableCors({ origin: '*' });
 
   const swaggerConfig = new DocumentBuilder()
-    .setTitle('Smart Mafia — Game Service')
+    .setTitle('Smart Mafia - Game Service')
     .setDescription('Room management, player sessions and game state API')
     .setVersion('1.0')
     .addBearerAuth({ type: 'http', scheme: 'bearer', bearerFormat: 'JWT' }, 'JWT')
@@ -24,10 +24,10 @@ async function bootstrap() {
   SwaggerModule.setup('api/docs', app, SwaggerModule.createDocument(app, swaggerConfig));
 
   const port = process.env.PORT || 3002;
-  await app.listen(port);
-  logger.log(`🎮 Game Service   → http://localhost:${port}`);
-  logger.log(`📚 Swagger docs   → http://localhost:${port}/api/docs`);
-  logger.log(`🔌 Socket.io      → ws://localhost:${process.env.SOCKET_PORT || 3012}`);
+  await app.listen(port, '0.0.0.0');
+  logger.log(`Game Service  -> http://localhost:${port}`);
+  logger.log(`Swagger docs  -> http://localhost:${port}/api/docs`);
+  logger.log(`Socket.io     -> ws://localhost:${port}/game`);
 }
 
 bootstrap();
