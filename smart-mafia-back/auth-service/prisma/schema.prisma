@@ -1,0 +1,106 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Smart Mafia — Prisma Schema
+// Shared data model for auth-service and game-service
+// ─────────────────────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Users ────────────────────────────────────────────────────────────────────
+
+model User {
+  id        String   @id @default(uuid())
+  username  String   @unique @db.VarChar(50)
+  email     String   @unique @db.VarChar(255)
+  password  String
+  role      Role     @default(PLAYER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  players Player[]
+
+  @@map("users")
+}
+
+enum Role {
+  PLAYER
+  HOST
+  ADMIN
+}
+
+// ─── Rooms ────────────────────────────────────────────────────────────────────
+
+model Room {
+  id         String     @id @default(uuid())
+  code       String     @unique @db.VarChar(8)   // e.g. "MAFIA123"
+  hostId     String
+  status     RoomStatus @default(WAITING)
+  maxPlayers Int        @default(10)
+  settings   Json       @default("{}")
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  players    Player[]
+  gameStates GameState[]
+
+  @@map("rooms")
+}
+
+enum RoomStatus {
+  WAITING
+  IN_PROGRESS
+  FINISHED
+}
+
+// ─── Players ──────────────────────────────────────────────────────────────────
+
+model Player {
+  id        String       @id @default(uuid())
+  userId    String
+  roomId    String
+  role      MafiaRole    @default(CIVILIAN)
+  isAlive   Boolean      @default(true)
+  joinedAt  DateTime     @default(now())
+
+  user      User         @relation(fields: [userId], references: [id])
+  room      Room         @relation(fields: [roomId], references: [id])
+
+  @@unique([userId, roomId])
+  @@map("players")
+}
+
+enum MafiaRole {
+  CIVILIAN
+  MAFIA
+  DETECTIVE
+  DOCTOR
+  NARRATOR  // AI-controlled host role
+}
+
+// ─── Game State ───────────────────────────────────────────────────────────────
+
+model GameState {
+  id        String    @id @default(uuid())
+  roomId    String
+  phase     GamePhase @default(DAY)
+  round     Int       @default(1)
+  snapshot  Json      // Full state snapshot as JSON
+  createdAt DateTime  @default(now())
+
+  room      Room      @relation(fields: [roomId], references: [id])
+
+  @@map("game_states")
+}
+
+enum GamePhase {
+  DAY
+  VOTING
+  NIGHT
+  GAME_OVER
+}

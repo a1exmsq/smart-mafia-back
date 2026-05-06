@@ -1,0 +1,77 @@
+version: '3.9'
+
+services:
+  # ─────────────────────────────────────────────
+  # Infrastructure
+  # ─────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: mafia_postgres
+    environment:
+      POSTGRES_USER: mafia
+      POSTGRES_PASSWORD: mafia_secret
+      POSTGRES_DB: mafia_db
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U mafia -d mafia_db']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: mafia_redis
+    ports:
+      - '6379:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ─────────────────────────────────────────────
+  # Microservices
+  # ─────────────────────────────────────────────
+  auth-service:
+    build:
+      context: ./auth-service
+      dockerfile: Dockerfile
+    container_name: mafia_auth
+    env_file: ./auth-service/.env
+    ports:
+      - '3001:3001'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  game-service:
+    build:
+      context: ./game-service
+      dockerfile: Dockerfile
+    container_name: mafia_game
+    env_file: ./game-service/.env
+    ports:
+      - '3002:3002'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  ai-service:
+    build:
+      context: ./ai-service
+      dockerfile: Dockerfile
+    container_name: mafia_ai
+    env_file: ./ai-service/.env
+    ports:
+      - '3003:3003'
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
