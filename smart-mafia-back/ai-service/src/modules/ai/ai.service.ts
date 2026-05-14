@@ -5,15 +5,30 @@ import { NarrateDto, NarrationEvent, AiResponseDto, ChatDto } from './dto/ai.dto
 
 // ── Prompt templates per game event ──────────────────────────────────────────
 const NARRATION_PROMPTS: Record<NarrationEvent, (ctx: NarrateDto) => string> = {
-  [NarrationEvent.GAME_START]: (ctx) =>
-    `The Mafia game is beginning. ${ctx.playerNames?.length} players have gathered: ${ctx.playerNames?.join(', ')}. 
-     Build dramatic suspense as the game starts. Warn that among them, the Mafia lurks in the shadows.`,
+  [NarrationEvent.GAME_START]: (ctx) => {
+    const settings = [
+      'a late-night poker game in the back room of a dimly lit bar',
+      'a weekend retreat at a remote mountain cabin with no phone signal',
+      'a corporate team-building trip that took a very dark turn',
+      'an underground speakeasy during a thunderstorm',
+      'a masquerade ball in an old mansion where the power has just gone out',
+      'a night shift at a research station cut off from the outside world',
+      'a reunion dinner in a locked restaurant after the last train left',
+    ];
+    const setting = settings[Math.floor(Math.random() * settings.length)];
+    const names = ctx.playerNames?.join(', ') ?? 'the players';
+    return `Set the scene: ${names} find themselves at ${setting}. ` +
+      `Someone among them is Mafia — they know who each other are, but nobody else does. ` +
+      `Write a short, atmospheric opening (max 100 words) that establishes this setting and builds dread. ` +
+      `Do not reveal roles. End with a line that signals the game has begun.`;
+  },
 
   [NarrationEvent.DAY_PHASE]: (ctx) =>
-    `It is now DAY — Round ${ctx.round ?? 1}. The town wakes up. 
-     ${ctx.context ?? 'The sun rises, but trust is thin.'}
-     Alive players: ${ctx.playerNames?.join(', ') ?? 'unknown'}.
-     Narrate the transition to day with tension, reminding players to discuss and find the Mafia.`,
+    `It is morning — Round ${ctx.round ?? 1}. ` +
+    (ctx.context ? `Last night: ${ctx.context} ` : 'The night passed quietly. ') +
+    `Surviving players: ${ctx.playerNames?.join(', ') ?? 'the group'}. ` +
+    `Narrate the dawn dramatically in under 80 words — describe what the survivors discover, ` +
+    `the atmosphere of suspicion, and remind them to find the Mafia before night returns.`,
 
   [NarrationEvent.VOTING_PHASE]: (ctx) =>
     `The town must now vote to eliminate a suspect. Round ${ctx.round ?? 1}.
@@ -54,8 +69,9 @@ export class AiService {
       this.logger.warn('⚠️  OPENAI_API_KEY not set — AI responses will be mocked');
     }
 
-    this.openai = new OpenAI({ apiKey: apiKey || 'not-set' });
-    this.model = this.config.get<string>('OPENAI_MODEL', 'gpt-4o-mini');
+    const baseURL = this.config.get<string>('OPENAI_BASE_URL', 'https://api.groq.com/openai/v1');
+    this.openai = new OpenAI({ apiKey: apiKey || 'not-set', baseURL });
+    this.model = this.config.get<string>('OPENAI_MODEL', 'llama3-8b-8192');
     this.systemPrompt = this.config.get<string>(
       'NARRATOR_PERSONA',
       'You are a dramatic narrator for the Mafia party game. Keep responses under 120 words. Use atmospheric, suspenseful language.',
@@ -90,7 +106,11 @@ export class AiService {
   // ── Health: verify OpenAI reachability ────────────────────────────────────
   async checkHealth(): Promise<{ status: string; model: string }> {
     try {
-      await this.openai.models.retrieve(this.model);
+      await this.openai.chat.completions.create({
+        model: this.model,
+        messages: [{ role: 'user', content: 'ping' }],
+        max_tokens: 5,
+      });
       return { status: 'ok', model: this.model };
     } catch {
       return { status: 'degraded', model: this.model };

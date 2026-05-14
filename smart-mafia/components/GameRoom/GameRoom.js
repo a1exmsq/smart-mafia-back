@@ -18,6 +18,38 @@ import {
 
 const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:3002';
 
+// ── Typewriter effect for AI messages ─────────────────────────────────────────
+function TypewriterText({ text, speed = 28, onDone }) {
+  const [displayed, setDisplayed] = useState('');
+  const idxRef = useRef(0);
+  const onDoneRef = useRef(onDone);
+
+  useEffect(() => { onDoneRef.current = onDone; });
+
+  useEffect(() => {
+    idxRef.current = 0;
+    setDisplayed('');
+    const interval = setInterval(() => {
+      idxRef.current += 1;
+      setDisplayed(text.slice(0, idxRef.current));
+      if (idxRef.current >= text.length) {
+        clearInterval(interval);
+        onDoneRef.current?.();
+      }
+    }, speed);
+    return () => clearInterval(interval);
+  }, [text, speed]); // onDone намеренно убран из зависимостей
+
+  return (
+    <span>
+      {displayed}
+      {displayed.length < text.length && (
+        <span style={{ animation: 'blink 0.8s step-end infinite', color: '#C9A84C' }}>▎</span>
+      )}
+    </span>
+  );
+}
+
 const PHASE_LABELS = {
   lobby: 'Lobby',
   intro: 'Evening Introductions',
@@ -112,6 +144,7 @@ export default function GameRoom() {
   const [finalRoles, setFinalRoles] = useState([]);
   const [nominations, setNominations] = useState({});
   const [speechTimer, setSpeechTimer] = useState(null);
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
 
   const socketRef = useRef(null);
   const playerRef = useRef(null);
@@ -119,6 +152,7 @@ export default function GameRoom() {
   const chatEndRef = useRef(null);
   const timerIntervalRef = useRef(null);
   const avatarMapRef = useRef({});
+  const voiceEnabledRef = useRef(true);
   const lastWinnerRef = useRef(null);
   const timerPlayerId = speechTimer?.playerId;
   const timerInitialSeconds = speechTimer?.initialSeconds;
@@ -129,6 +163,26 @@ export default function GameRoom() {
       { id: `${Date.now()}-${Math.random()}`, from, text, type, time: formatTime() },
     ]);
   }, []);
+
+  const speakText = useCallback((text) => {
+    if (!voiceEnabledRef.current) return;
+    if (typeof window === 'undefined' || !window.speechSynthesis) return;
+    window.speechSynthesis.cancel();
+    const utt = new SpeechSynthesisUtterance(text);
+    utt.lang = 'en-US'; utt.rate = 0.92; utt.pitch = 0.85; utt.volume = 1;
+    const voices = window.speechSynthesis.getVoices();
+    const preferred = voices.find(v => v.lang.startsWith('en') && /male|david|george|daniel|alex/i.test(v.name))
+      || voices.find(v => v.lang.startsWith('en'));
+    if (preferred) utt.voice = preferred;
+    window.speechSynthesis.speak(utt);
+  }, []);
+
+  const toggleVoice = () => {
+    const next = !voiceEnabledRef.current;
+    voiceEnabledRef.current = next;
+    setVoiceEnabled(next);
+    if (!next && typeof window !== 'undefined') window.speechSynthesis?.cancel();
+  };
 
   const refreshPlayers = useCallback(async (roomId, myUserId) => {
     try {
@@ -325,7 +379,18 @@ export default function GameRoom() {
 
     socket.on('ai_narration', (data) => {
       setAiThinking(false);
-      if (data?.text) addMsg('AI Host', data.text, 'host');
+      if (data?.text) {
+        const typingMsg = {
+          id: `${Date.now()}-${Math.random()}`,
+          from: 'AI Host',
+          text: data.text,
+          type: 'host',
+          time: formatTime(),
+          typing: true,
+        };
+        setMessages((prev) => [...prev, typingMsg]);
+        speakText(data.text);
+      }
     });
 
     socket.on('system_message', (data) => {
@@ -1047,7 +1112,15 @@ export default function GameRoom() {
                     <span className={styles.msgTime}>{message.time}</span>
                   </div>
                 )}
-                <p className={styles.msgText}>{message.text}</p>
+                <p className={styles.msgText}>
+                  {message.typing ? (
+                    <TypewriterText
+                      text={message.text}
+                      speed={18}
+                      onDone={() => setMessages((prev) => prev.map((m) => m.id === message.id ? { ...m, typing: false } : m))}
+                    />
+                  ) : message.text}
+                </p>
               </div>
             ))}
 
@@ -1068,6 +1141,16 @@ export default function GameRoom() {
           </div>
 
           <div className={styles.chatInput}>
+            <button
+              onClick={toggleVoice}
+              title={voiceEnabled ? 'Voice ON — click to mute' : 'Voice OFF — click to enable'}
+              style={{
+                background: voiceEnabled ? 'rgba(201,146,42,0.15)' : 'rgba(80,80,80,0.1)',
+                border: `1px solid ${voiceEnabled ? '#C9A84C' : '#444'}`,
+                borderRadius: '6px', color: voiceEnabled ? '#C9A84C' : '#555',
+                cursor: 'pointer', fontSize: '16px', padding: '6px 10px', flexShrink: 0,
+              }}
+            >{voiceEnabled ? '🔊' : '🔇'}</button>
             <input
               className={styles.chatField}
               type="text"
